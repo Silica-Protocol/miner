@@ -1,0 +1,30 @@
+pub mod boinc;
+pub mod boinc_client;
+pub mod boinc_compat;
+pub mod config;
+pub mod crypto;
+pub mod hardware_detection;
+pub mod integration_example;
+pub mod miner_core;
+pub mod miner_tui;
+pub mod nuw_worker;
+pub mod oracle;
+pub mod oracle_profile;
+pub mod performance_monitor;
+pub mod project_preferences;
+pub mod rate_limiter;
+pub mod security_logger;
+
+// Re-export commonly used types
+pub use boinc::{BoincRunner, BoincStats, run_boinc_worker};
+pub use config::MinerConfig;
+pub use hardware_detection::{HardwareProfile, HardwareType, detect_hardware_capabilities};
+pub use integration_example::{IntegrationManager, IntegrationStatus, run_integration_demo};
+pub use miner_core::{MinerCore, MinerStatus, WorkMode, run_miner};
+pub use miner_tui::MinerTui;
+pub use nuw_worker::{NuwChallenge, NuwChallengeType, NuwSolution, NuwStats, NuwWorker};
+pub use oracle_profile::{OracleProfileClient, OracleProfileManager, ProjectRecommendation};
+pub use performance_monitor::PerformanceMonitor;
+pub use project_preferences::{ProjectInfo, ProjectPreferenceManager, ProjectSelection};
+pub use rate_limiter::RateLimiter;
+pub use security_logger::SecurityLogger;
