@@ -7,52 +7,80 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Silica-Protocol/miner"
 
 [workspace.dependencies]
-# Internal - Git dependencies
+# ============================================================================
+# INTERNAL DEPENDENCIES
+# ============================================================================
 silica-models = { git = "https://github.com/Silica-Protocol/protocol-core", branch = "main" }
 
-# Core async
-tokio = { version = "1.40", features = ["full"] }
+# ============================================================================
+# ASYNC RUNTIME
+# ============================================================================
+tokio = { version = "=1.45.1", features = ["full"] }
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# ============================================================================
+# SERIALIZATION - Locked for ABI stability
+# ============================================================================
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.148"
 
-# Error handling
+# ============================================================================
+# ERROR HANDLING
+# ============================================================================
 anyhow = "1.0"
 
-# Time
-chrono = { version = "0.4", features = ["serde"] }
+# ============================================================================
+# TIME
+# ============================================================================
+chrono = { version = "=0.4.42", default-features = false, features = ["serde", "std", "clock"] }
 
-# Logging
+# ============================================================================
+# LOGGING
+# ============================================================================
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Networking
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+# ============================================================================
+# NETWORKING
+# ============================================================================
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
-# Cryptography
-sha2 = "0.10"
-sha3 = "0.10"
-blake3 = "1.5"
-ed25519-dalek = { version = "2.1", features = ["serde", "pkcs8"] }
-rand = { version = "0.8.4", features = ["getrandom"] }
-hex = "0.4"
-argon2 = "0.5"
-subtle = "2.5"
-pqcrypto-dilithium = "0.5"
-pqcrypto-traits = "0.3"
+# ============================================================================
+# CRYPTOGRAPHY - MISSION CRITICAL - LOCKED
+# ============================================================================
+sha2 = "=0.10.9"
+hex = "=0.4.3"
+argon2 = "=0.5.3"
+subtle = "=2.6.1"
+ed25519-dalek = { version = "=2.2.0", features = ["serde", "pkcs8", "rand_core"] }
+pqcrypto-dilithium = "=0.5.0"
+pqcrypto-traits = "=0.3.5"
 
-# Utilities
-uuid = { version = "1.10", features = ["v4", "serde"] }
+# ============================================================================
+# UTILITIES
+# ============================================================================
 num_cpus = "1.16"
-flate2 = "1.0"
-tar = "0.4"
-zip = "6.0"
-base64 = "0.22"
 
-# Dev
+# ============================================================================
+# DEV
+# ============================================================================
 tempfile = "3.14"
 
+# ============================================================================
+# PROFILES
+# ============================================================================
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+# ============================================================================
+# PACKAGE
+# ============================================================================
 [package]
 name = "silica-miner"
 version = "0.1.0"
@@ -61,25 +89,29 @@ license.workspace = true
 repository.workspace = true
 description = "Mining client for Silica Protocol Network Utility Work (NUW)"
 
+[lib]
+name = "miner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "silica-miner"
+path = "src/main.rs"
+
 [features]
 default = ["sysinfo"]
 sysinfo = ["dep:sysinfo"]
 
 [dependencies]
+# Core
 tokio = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
-anyhow = { workspace = true }
 serde_json = { workspace = true }
+anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
-flate2 = { workspace = true }
-tar = { workspace = true }
-zip = { workspace = true }
-base64 = { workspace = true }
 num_cpus = { workspace = true }
-sha3 = { workspace = true }
 
 # System monitoring
 sysinfo = { version = "0.29", optional = true }
@@ -89,11 +121,8 @@ ratatui = "0.24"
 # Shared models
 silica-models = { workspace = true }
 hex = { workspace = true }
-uuid = { workspace = true }
 sha2 = { workspace = true }
-blake3 = { workspace = true }
 subtle = { workspace = true }
-rand = { workspace = true }
 
 # Cryptography for NUW
 argon2 = { workspace = true }
@@ -103,8 +132,3 @@ pqcrypto-traits = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3
