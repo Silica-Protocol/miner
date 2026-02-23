@@ -22,7 +22,11 @@ pub struct MinerConfig {
     pub boinc_data_dir: PathBuf,
     /// BOINC log file path
     pub boinc_log_file: PathBuf,
-    /// Miner user identifier
+    /// Miner account address (for payment)
+    pub account_address: String,
+    /// Miner worker name (like traditional PoW miner worker names)
+    pub worker_name: String,
+    /// Miner user identifier (deprecated, use account_address + worker_name)
     pub user_id: String,
     /// Miner operation mode
     pub mode: MinerMode,
@@ -52,8 +56,15 @@ pub struct WorkAllocationConfig {
     pub boinc_on_gpu: bool,
     /// Percentage of CPU cores to allocate to NUW (0-100)
     pub nuw_cpu_percentage: u8,
+    /// Percentage of CPU cores to allocate to BOINC (0-100)
+    pub boinc_cpu_percentage: u8,
     /// Percentage of GPU resources to allocate to BOINC (0-100)
     pub boinc_gpu_percentage: u8,
+    /// Low CPU mode - limits CPU usage for casual use (0-100)
+    /// When enabled, caps total CPU and lowers process priority
+    pub low_cpu_mode: bool,
+    /// CPU limit percentage when low_cpu_mode is enabled (default 70%)
+    pub low_cpu_limit: u8,
     /// Enable on-demand NUW tasks (user can choose when to run)
     pub nuw_on_demand: bool,
     /// Minimum NUW difficulty threshold to accept
@@ -124,13 +135,22 @@ pub struct DebugConfig {
 
 impl Default for MinerConfig {
     fn default() -> Self {
+        // Default to local directory relative to executable
+        let local_boinc = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+
         Self {
-            oracle_url: "https://oracle.chert.network".to_string(), // Default to HTTPS
+            oracle_url: "https://oracle.silicaprotocol.network".to_string(),
             oracle_timeout_secs: 30,
-            boinc_install_dir: PathBuf::from("/opt/chert/boinc"),
-            boinc_data_dir: PathBuf::from("/opt/chert/boinc/data"),
-            boinc_log_file: PathBuf::from("/opt/chert/boinc/logs/output.log"),
-            user_id: "".to_string(), // Must be configured
+            // Use local directory by default (same as miner binary)
+            boinc_install_dir: local_boinc.join("boinc"),
+            boinc_data_dir: local_boinc.join("boinc_data"),
+            boinc_log_file: local_boinc.join("boinc.log"),
+            account_address: "".to_string(),
+            worker_name: "default".to_string(),
+            user_id: "".to_string(),
             mode: MinerMode::Traditional,
             work_allocation: WorkAllocationConfig::default(),
             preferences: ProjectPreferencesConfig::default(),
@@ -146,7 +166,10 @@ impl Default for WorkAllocationConfig {
             nuw_on_cpu: false,                            // Default to BOINC on CPU
             boinc_on_gpu: true,                           // Default to BOINC on GPU
             nuw_cpu_percentage: 25,                       // Use 25% of CPU for NUW when enabled
+            boinc_cpu_percentage: 50,                     // Use 50% of CPU for BOINC
             boinc_gpu_percentage: 75,                     // Use 75% of GPU for BOINC
+            low_cpu_mode: false,                          // Default to full power (dedicated mode)
+            low_cpu_limit: 70,                            // 70% CPU limit when low_cpu_mode enabled
             nuw_on_demand: true,                          // NUW tasks on-demand by default
             min_nuw_difficulty: 1000,                     // Minimum difficulty threshold
             max_boinc_tasks: 2,                           // Maximum concurrent BOINC tasks
@@ -247,6 +270,28 @@ impl MinerConfig {
             ));
         }
 
+        // Account address for payments (required for NUW)
+        if let Ok(account) = env::var("CHERT_MINER_ACCOUNT") {
+            if account.is_empty() {
+                return Err(anyhow::anyhow!("Account address cannot be empty"));
+            }
+            config.account_address = account;
+        } else {
+            return Err(anyhow::anyhow!(
+                "CHERT_MINER_ACCOUNT is required for NUW mining"
+            ));
+        }
+
+        // Worker name (like traditional PoW miners)
+        if let Ok(worker) = env::var("CHERT_MINER_WORKER") {
+            if worker.is_empty() || worker.len() > 32 {
+                return Err(anyhow::anyhow!("Worker name must be 1-32 characters"));
+            }
+            config.worker_name = worker;
+        } else {
+            config.worker_name = "default".to_string();
+        }
+
         // Work allocation configuration
         if let Ok(nuw_on_cpu) = env::var("CHERT_NUW_ON_CPU") {
             config.work_allocation.nuw_on_cpu = nuw_on_cpu.parse()?;
@@ -270,6 +315,29 @@ impl MinerConfig {
                 return Err(anyhow::anyhow!("BOINC GPU percentage cannot exceed 100%"));
             }
             config.work_allocation.boinc_gpu_percentage = percentage;
+        }
+
+        // BOINC CPU percentage
+        if let Ok(boinc_cpu_percentage) = env::var("CHERT_BOINC_CPU_PERCENTAGE") {
+            let percentage = boinc_cpu_percentage.parse::<u8>()?;
+            if percentage > 100 {
+                return Err(anyhow::anyhow!("BOINC CPU percentage cannot exceed 100%"));
+            }
+            config.work_allocation.boinc_cpu_percentage = percentage;
+        }
+
+        // Low CPU mode
+        if let Ok(low_cpu_mode) = env::var("CHERT_LOW_CPU_MODE") {
+            config.work_allocation.low_cpu_mode = low_cpu_mode == "1" || low_cpu_mode == "true";
+        }
+
+        // Low CPU limit
+        if let Ok(low_cpu_limit) = env::var("CHERT_LOW_CPU_LIMIT") {
+            let limit = low_cpu_limit.parse::<u8>()?;
+            if limit > 100 {
+                return Err(anyhow::anyhow!("Low CPU limit cannot exceed 100%"));
+            }
+            config.work_allocation.low_cpu_limit = limit;
         }
 
         if let Ok(nuw_on_demand) = env::var("CHERT_NUW_ON_DEMAND") {
@@ -862,7 +930,7 @@ impl MinerConfig {
     pub fn create_http_client(&self) -> Result<reqwest::Client> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.oracle_timeout_secs))
-            .user_agent("chert-miner/1.0");
+            .user_agent("silica-miner/1.0");
 
         // Apply security settings
         if !self.security.verify_certificates {

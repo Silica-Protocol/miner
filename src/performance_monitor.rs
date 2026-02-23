@@ -306,7 +306,7 @@ impl PerformanceMonitor {
 
     /// Collect BOINC metrics from real-time app_msg_receive log output
     fn collect_boinc_metrics_from_log(&self) -> Result<BoincTaskMetrics> {
-        let log_path = "/tmp/chert_miner_boinc/boinc_output.log";
+        let log_path = format!("{}/boinc_output.log", self.boinc_data_dir);
 
         if !Path::new(&log_path).exists() {
             return Err(anyhow::anyhow!("BOINC output log not found"));

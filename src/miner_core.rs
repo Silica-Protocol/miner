@@ -23,10 +23,12 @@ use tracing::{error, info, warn};
 
 use crate::boinc::{BoincAutomation, BoincRunner, BoincStats};
 use crate::config::MinerConfig;
+use crate::console_display::{start_console_display, ConsoleDisplay};
 use crate::hardware_detection::{HardwareDetector, HardwareProfile, HardwareType};
 use crate::nuw_worker::NuwWorker;
 use crate::oracle_profile::OracleProfileManager;
 use crate::performance_monitor::{MetricsSnapshot, PerformanceMonitor};
+use crate::resource_manager::ResourceManager;
 
 /// Mining work mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,6 +74,10 @@ pub struct MinerCore {
     // Hardware
     hardware_profile: Option<HardwareProfile>,
 
+    // Resource management
+    resource_manager: Option<ResourceManager>,
+    console_display: Option<ConsoleDisplay>,
+
     // Workers
     boinc: Option<BoincAutomation>,
     boinc_runner: Option<BoincRunner>,
@@ -104,11 +110,14 @@ impl MinerCore {
             WorkMode::GpuOnly
         };
 
+        let work_allocation = config.work_allocation.clone();
         Self {
             config,
             work_mode,
             running: Arc::new(AtomicBool::new(false)),
             hardware_profile: None,
+            resource_manager: Some(ResourceManager::new(work_allocation)),
+            console_display: None,
             boinc: None,
             boinc_runner: None,
             boinc_stats: None,
@@ -139,6 +148,12 @@ impl MinerCore {
         );
 
         self.hardware_profile = Some(profile);
+
+        // 1b. Apply resource management settings
+        if let Some(ref rm) = self.resource_manager {
+            info!("Applying resource management: {}", rm.get_mode_description());
+            rm.apply().await;
+        }
 
         // 2. Initialize Oracle profile manager
         info!("Connecting to oracle...");
@@ -218,7 +233,11 @@ impl MinerCore {
         // 4. Initialize NUW worker if needed
         if matches!(self.work_mode, WorkMode::Mixed | WorkMode::NuwOnly) {
             info!("Initializing NUW worker...");
-            let nuw_worker = Arc::new(NuwWorker::new(&self.config));
+            let nuw_worker = Arc::new(NuwWorker::new(
+                &self.config,
+                self.config.account_address.clone(),
+                self.config.worker_name.clone(),
+            ));
             self.nuw_worker = Some(nuw_worker);
         }
 
@@ -240,6 +259,15 @@ impl MinerCore {
         }
 
         info!("Starting Chert miner in {:?} mode", self.work_mode);
+
+        // Start console display if enabled
+        let nuw_stats = self.nuw_worker.as_ref().map(|w| w.stats_arc());
+        let console_display = start_console_display(
+            &self.config,
+            nuw_stats,
+            self.boinc_stats.clone(),
+        ).await;
+        self.console_display = console_display;
 
         // Start NUW worker if enabled
         let nuw_handle = if let Some(nuw_worker) = &self.nuw_worker {
@@ -331,12 +359,12 @@ impl MinerCore {
                 // Log NUW stats periodically
                 if let Some(ref worker) = nuw_worker {
                     let stats = worker.stats();
-                    let solved = stats.challenges_solved.load(Ordering::Relaxed);
+                    let solved = stats.tasks_completed.load(Ordering::Relaxed);
                     if solved > 0 && solved % 10 == 0 {
                         info!(
                             "NUW: {} solved, {} failed, avg time: {}ms",
                             solved,
-                            stats.challenges_failed.load(Ordering::Relaxed),
+                            stats.tasks_failed.load(Ordering::Relaxed),
                             stats.avg_solution_time_ms.load(Ordering::Relaxed)
                         );
                     }
@@ -380,6 +408,11 @@ impl MinerCore {
     pub async fn stop(&mut self) -> Result<()> {
         info!("Stopping miner...");
         self.running.store(false, Ordering::SeqCst);
+
+        // Stop console display
+        if let Some(ref display) = self.console_display {
+            display.stop();
+        }
 
         if let Some(nuw_worker) = &self.nuw_worker {
             nuw_worker.stop();
@@ -429,7 +462,7 @@ impl MinerCore {
                 .map(|p| p.hardware_type.clone())
                 .unwrap_or(HardwareType::Unknown),
             nuw_challenges_solved: nuw_stats
-                .map(|s| s.challenges_solved.load(Ordering::Relaxed))
+                .map(|s| s.tasks_completed.load(Ordering::Relaxed))
                 .unwrap_or(0),
             boinc_work_units,
             current_boinc_project: current_project,
