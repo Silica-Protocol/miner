@@ -231,6 +231,121 @@ pub async fn submit_result(oracle_url: &str, work: &BoincWork, _result: &str) ->
     }
 }
 
+/// Demand level from oracle
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DemandResponse {
+    #[serde(default)]
+    pub current: DemandCurrent,
+    #[serde(default)]
+    pub saturation: f64,
+    #[serde(default)]
+    pub recommendation: String,
+    #[serde(default)]
+    pub eta_empty_seconds: f64,
+    #[serde(default)]
+    pub historical: Option<DemandHistorical>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DemandCurrent {
+    #[serde(default)]
+    pub p0: PriorityDemand,
+    #[serde(default)]
+    pub p1: PriorityDemand,
+    #[serde(default)]
+    pub p2: PriorityDemand,
+    #[serde(default)]
+    pub special: PriorityDemand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PriorityDemand {
+    #[serde(default)]
+    pub depth: u32,
+    #[serde(default)]
+    pub rate_in: f64,
+    #[serde(default)]
+    pub rate_out: f64,
+    #[serde(default)]
+    pub avg_wait_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DemandHistorical {
+    #[serde(default)]
+    pub avg_hourly_demand: f64,
+    #[serde(default)]
+    pub peak_hourly_demand: f64,
+    #[serde(default)]
+    pub typical_peak_hour: u32,
+    #[serde(default)]
+    pub total_tasks_24h: f64,
+    #[serde(default)]
+    pub total_tasks_7d: f64,
+}
+
+impl DemandResponse {
+    /// Get total pending tasks across all priorities
+    pub fn total_depth(&self) -> u32 {
+        self.current.p0.depth + self.current.p1.depth + self.current.p2.depth + self.current.special.depth
+    }
+
+    /// Get high priority depth (p0 + p1)
+    pub fn high_priority_depth(&self) -> u32 {
+        self.current.p0.depth + self.current.p1.depth
+    }
+
+    /// Get demand level as a score (0-100)
+    /// Higher score = more demand = reduce BOINC more
+    pub fn demand_score(&self) -> u8 {
+        let depth = self.total_depth();
+        let high_prio = self.high_priority_depth();
+        
+        // Base score from depth (0-60)
+        let depth_score = ((depth.min(100) as f64) * 0.6) as u8;
+        
+        // High priority boost (0-30)
+        let prio_score = ((high_prio.min(50) as f64) * 0.6) as u8;
+        
+        // Saturation factor (0-10)
+        let sat_score = (self.saturation.min(100.0) * 0.1) as u8;
+        
+        (depth_score + prio_score + sat_score).min(100)
+    }
+}
+
+/// Fetch demand from oracle
+pub async fn fetch_demand(oracle_url: &str) -> anyhow::Result<DemandResponse> {
+    // Validate URL
+    if oracle_url.is_empty() {
+        return Err(anyhow::anyhow!("Oracle URL cannot be empty"));
+    }
+
+    let client = create_secure_client()?;
+    let request_url = format!("{}/demand", oracle_url);
+
+    let resp = client
+        .get(&request_url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to oracle: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Oracle demand request failed with status: {}",
+            resp.status()
+        ));
+    }
+
+    let demand: DemandResponse = resp
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to parse demand response: {}", e))?;
+
+    Ok(demand)
+}
+
 /// Get available work types from oracle (placeholder - could be enhanced)
 pub async fn get_available_work_types(oracle_url: &str) -> anyhow::Result<Vec<String>> {
     // For now, return known BOINC project types

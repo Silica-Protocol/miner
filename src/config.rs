@@ -75,6 +75,14 @@ pub struct WorkAllocationConfig {
     pub hardware_capabilities: HardwareType,
     /// Auto-detect hardware capabilities on startup
     pub auto_detect_hardware: bool,
+    /// Dynamic throttling: reduce BOINC by this % when NUW active (default 20)
+    pub throttling_reduce_rate: u8,
+    /// Dynamic throttling: recover BOINC by this % when NUW idle (default 5)
+    pub throttling_recover_rate: u8,
+    /// Dynamic throttling: seconds of NUW idle before BOINC recovers (default 30)
+    pub throttling_recover_delay_secs: u64,
+    /// Dynamic throttling: minimum BOINC CPU % (default 20)
+    pub throttling_min_boinc_cpu: u8,
 }
 
 /// Project preferences configuration
@@ -175,6 +183,10 @@ impl Default for WorkAllocationConfig {
             max_boinc_tasks: 2,                           // Maximum concurrent BOINC tasks
             hardware_capabilities: HardwareType::Unknown, // Will be auto-detected
             auto_detect_hardware: true,                   // Auto-detect on startup
+            throttling_reduce_rate: 20,                   // Reduce BOINC by 20% when NUW active
+            throttling_recover_rate: 5,                   // Recover BOINC by 5% when NUW idle
+            throttling_recover_delay_secs: 30,            // Wait 30s before recovering
+            throttling_min_boinc_cpu: 20,                 // Minimum 20% BOINC CPU
         }
     }
 }
